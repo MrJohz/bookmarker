@@ -1,0 +1,6 @@
+[tools]
+erlang = "29.0.3"
+gleam = "1.17.0"
+rebar = "3.27.0"
+
+"npm:pino-pretty" = "13.1.3"
