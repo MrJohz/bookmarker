@@ -14,14 +14,10 @@ CREATE TABLE archives (
   );
 CREATE TABLE tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tag TEXT NOT NULL
-  );
-CREATE TABLE tag_bookmarks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tag_id INTEGER NOT NULL,
+    tag TEXT NOT NULL,
     bookmark_id INTEGER NOT NULL,
-    FOREIGN KEY (tag_id) REFERENCES tags (id),
-    FOREIGN KEY (bookmark_id) REFERENCES bookmarks (id)
+    FOREIGN KEY (bookmark_id) REFERENCES bookmarks (id),
+    UNIQUE (tag, bookmark_id)
   );
 CREATE TABLE changelog (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

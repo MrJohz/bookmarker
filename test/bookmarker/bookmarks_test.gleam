@@ -52,3 +52,35 @@ pub fn create_bookmark_returns_bookmark_test() {
 
   bookmark |> should.equal(fetched_bookmark)
 }
+
+pub fn add_tags_to_bookmark_updates_bookmark_test() {
+  use bc <- with_test_db()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(bookmark) = bookmarks.add_tags(bc, bookmark, ["tag1", "tag2"])
+
+  bookmark.tags |> should.equal(option.Some(["tag1", "tag2"]))
+}
+
+pub fn add_tags_to_bookmark_is_idempotent_test() {
+  use bc <- with_test_db()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(_) = bookmarks.add_tags(bc, bookmark, ["tag1", "tag2"])
+  let assert Ok(bookmark) = bookmarks.add_tags(bc, bookmark, ["tag1", "tag2"])
+
+  bookmark.tags |> should.equal(option.Some(["tag1", "tag2"]))
+}
+
+pub fn add_tags_to_bookmark_merges_with_existing_tags_test() {
+  use bc <- with_test_db()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(bookmark) = bookmarks.add_tags(bc, bookmark, ["tag1", "tag2"])
+  let assert Ok(bookmark) = bookmarks.add_tags(bc, bookmark, ["tag2", "tag3"])
+
+  bookmark.tags |> should.equal(option.Some(["tag1", "tag2", "tag3"]))
+}

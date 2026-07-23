@@ -1,7 +1,6 @@
 import cake
 import cake/dialect/sqlite_dialect
 import cake/insert as i
-import cake/join as j
 import cake/param
 import cake/select as s
 import cake/where as w
@@ -9,6 +8,7 @@ import gleam/dynamic/decode
 import gleam/list
 import gleam/option.{type Option}
 import gleam/result
+import gleam/string
 import sqlight.{type Connection, type Error, type Value}
 
 pub opaque type BookmarkConn {
@@ -89,6 +89,43 @@ pub fn add_bookmark(bc: BookmarkConn, url: String) -> Result(Bookmark, Error) {
   Ok(bookmark)
 }
 
+pub fn add_tags(
+  bc: BookmarkConn,
+  bm: Bookmark,
+  tags: List(String),
+) -> Result(Bookmark, Error) {
+  let BookmarkId(id) = bm.id
+  let prepared =
+    tags
+    |> list.map(fn(tag) {
+      [i.string(tag), i.int(id)]
+      |> i.row
+    })
+    |> i.from_values(table_name: "tags", columns: ["tag", "bookmark_id"])
+    |> i.on_columns_conflict_ignore(["tag", "bookmark_id"], where: w.none())
+    |> i.to_query
+    |> sqlite_dialect.write_query_to_prepared_statement
+
+  let sql = cake.get_sql(prepared)
+  let with = cake.get_params(prepared) |> list.map(param_to_value)
+
+  use _ <- result.try(
+    sqlight.query(sql, on: bc.db, with:, expecting: { decode.success(Nil) }),
+  )
+
+  let merged =
+    list.append(option.unwrap(bm.tags, []), tags)
+    |> list.unique
+    |> list.sort(string.compare)
+
+  Ok(
+    Bookmark(..bm, tags: case merged {
+      [] -> option.None
+      sorted -> option.Some(sorted)
+    }),
+  )
+}
+
 fn list_archives(
   _bc: BookmarkConn,
   _bookmark: BookmarkId,
@@ -104,12 +141,7 @@ fn list_tags(
   let prepared =
     s.new()
     |> s.from_table("tags")
-    |> s.join(j.left(
-      with: j.table("tag_bookmarks"),
-      on: w.col("tb.tag_id") |> w.eq(w.col("tags.id")),
-      alias: "tb",
-    ))
-    |> s.where(w.col("tb.bookmark_id") |> w.eq(w.int(id)))
+    |> s.where(w.col("tags.bookmark_id") |> w.eq(w.int(id)))
     |> s.selects([s.col("tags.tag")])
     |> s.to_query
     |> sqlite_dialect.read_query_to_prepared_statement
@@ -126,7 +158,7 @@ fn list_tags(
 
   case entries {
     [] -> Ok(option.None)
-    _ -> Ok(option.Some(entries))
+    _ -> Ok(option.Some(entries |> list.sort(string.compare)))
   }
 }
 

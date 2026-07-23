@@ -19,16 +19,10 @@ CREATE TABLE
 CREATE TABLE
   tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tag TEXT NOT NULL
-  );
-
-CREATE TABLE
-  tag_bookmarks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tag_id INTEGER NOT NULL,
+    tag TEXT NOT NULL,
     bookmark_id INTEGER NOT NULL,
-    FOREIGN KEY (tag_id) REFERENCES tags (id),
-    FOREIGN KEY (bookmark_id) REFERENCES bookmarks (id)
+    FOREIGN KEY (bookmark_id) REFERENCES bookmarks (id),
+    UNIQUE (tag, bookmark_id)
   );
 
 CREATE TABLE
@@ -42,12 +36,10 @@ CREATE TABLE
   );
 
 -- migrate:down
-DELETE TABLE changelog;
+DROP TABLE IF EXISTS changelog;
 
-DELETE TABLE archives;
+DROP TABLE IF EXISTS tags;
 
-DELETE TABLE tag_bookmarks;
+DROP TABLE IF EXISTS archives;
 
-DELETE TABLE bookmarks;
-
-DELETE TABLE tags;
+DROP TABLE IF EXISTS bookmarks;
