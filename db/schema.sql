@@ -2,6 +2,7 @@ CREATE TABLE "schema_migrations" (version varchar(128) primary key);
 CREATE TABLE bookmarks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     url TEXT NOT NULL,
+    title TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 CREATE TABLE archives (

@@ -28,10 +28,11 @@ pub fn list_bookmarks_with_unarchived_entry_test() {
 
   let assert Ok([
     bookmarks.Bookmark(
+      id: _,
       url: "http://example.com",
+      title: None,
       tags: None,
       archives: None,
-      ..,
     ),
   ]) = bookmarks.list_bookmarks(bc)
 }
@@ -42,10 +43,11 @@ pub fn create_bookmark_returns_bookmark_test() {
   let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
 
   let assert bookmarks.Bookmark(
+    id: _,
     url: "http://example.com",
+    title: None,
     tags: None,
     archives: None,
-    ..,
   ) = bookmark
 
   let assert Ok([fetched_bookmark]) = bookmarks.list_bookmarks(bc)

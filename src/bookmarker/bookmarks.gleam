@@ -27,6 +27,7 @@ pub type Bookmark {
   Bookmark(
     id: BookmarkId,
     url: String,
+    title: Option(String),
     tags: Option(List(String)),
     archives: Option(List(String)),
   )
@@ -36,7 +37,11 @@ pub fn list_bookmarks(bc: BookmarkConn) -> Result(List(Bookmark), Error) {
   let sql =
     s.new()
     |> s.from_table("bookmarks")
-    |> s.selects([s.col("bookmarks.id"), s.col("bookmarks.url")])
+    |> s.selects([
+      s.col("bookmarks.id"),
+      s.col("bookmarks.url"),
+      s.col("bookmarks.title"),
+    ])
     |> s.to_query
     |> sqlite_dialect.read_query_to_prepared_statement
     |> cake.get_sql
@@ -45,16 +50,17 @@ pub fn list_bookmarks(bc: BookmarkConn) -> Result(List(Bookmark), Error) {
     sqlight.query(sql, on: bc.db, with: [], expecting: {
       use id <- decode.field(0, decode.int)
       use url <- decode.field(1, decode.string)
-      decode.success(#(BookmarkId(id), url))
+      use title <- decode.field(2, decode.string |> decode.optional)
+      decode.success(#(BookmarkId(id), url, title))
     }),
   )
 
   entries
   |> list.try_map(fn(tup) {
-    let #(id, url) = tup
+    let #(id, url, title) = tup
     use tags <- result.try(list_tags(bc, id))
     use archives <- result.try(list_archives(bc, id))
-    Ok(Bookmark(id:, url:, tags:, archives:))
+    Ok(Bookmark(id:, url:, title:, tags:, archives:))
   })
 }
 
@@ -78,6 +84,7 @@ pub fn add_bookmark(bc: BookmarkConn, url: String) -> Result(Bookmark, Error) {
       decode.success(Bookmark(
         id: BookmarkId(id),
         url:,
+        title: option.None,
         tags: option.None,
         archives: option.None,
       ))
