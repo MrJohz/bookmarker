@@ -1,54 +1,77 @@
 import bookmarker/bookmarks.{type BookmarkConn}
 import gleam/option.{None}
+import gleam/time/timestamp
 import gleeunit/should
+import mock_clock
 import simplifile
 import sqlight
 
-/// Opens an empty in-memory database with the schema from `db/schema.sql`
-/// applied, so tests always run against the same tables as production.
-fn with_test_db(f: fn(BookmarkConn) -> a) -> a {
+fn ts(iso: String) -> timestamp.Timestamp {
+  let assert Ok(timestamp) = timestamp.parse_rfc3339(iso)
+  timestamp
+}
+
+type Deps {
+  Deps(conn: sqlight.Connection, clock: mock_clock.Clock)
+}
+
+fn with_test_conn(f: fn(BookmarkConn, Deps) -> a) -> a {
   use conn <- sqlight.with_connection(":memory:")
   let assert Ok(schema) = simplifile.read("db/schema.sql")
   let assert Ok(Nil) = sqlight.exec(schema, on: conn)
 
-  f(bookmarks.new(conn))
+  let clock = mock_clock.new(timestamp.from_unix_seconds(0))
+  f(bookmarks.new(conn, mock_clock.now(clock)), Deps(conn:, clock:))
 }
 
-// gleeunit test functions end in `_test`
 pub fn list_bookmarks_empty_test() {
-  use bc <- with_test_db()
+  use bc, _ <- with_test_conn()
 
   bookmarks.list_bookmarks(bc) |> should.equal(Ok([]))
 }
 
 pub fn list_bookmarks_with_unarchived_entry_test() {
-  use bc <- with_test_db()
+  use bc, Deps(clock:, ..) <- with_test_conn()
+
+  let now = ts("2026-01-05T00:05:10Z")
+  mock_clock.set(clock, now)
 
   let assert Ok(_) = bookmarks.add_bookmark(bc, "http://example.com")
 
   let assert Ok([
     bookmarks.Bookmark(
       id: _,
-      url: "http://example.com",
+      created_at:,
+      url:,
       title: None,
       tags: None,
       archives: None,
     ),
   ]) = bookmarks.list_bookmarks(bc)
+
+  created_at |> should.equal(now)
+  url |> should.equal("http://example.com")
 }
 
 pub fn create_bookmark_returns_bookmark_test() {
-  use bc <- with_test_db()
+  use bc, Deps(clock:, ..) <- with_test_conn()
+
+  let now = ts("2026-01-05T00:05:10Z")
+  mock_clock.set(clock, now)
 
   let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
 
   let assert bookmarks.Bookmark(
     id: _,
-    url: "http://example.com",
+    created_at:,
+    url:,
     title: None,
     tags: None,
     archives: None,
   ) = bookmark
+
+  created_at |> should.equal(now)
+  url |> should.equal("http://example.com")
 
   let assert Ok([fetched_bookmark]) = bookmarks.list_bookmarks(bc)
 
@@ -56,7 +79,7 @@ pub fn create_bookmark_returns_bookmark_test() {
 }
 
 pub fn add_tags_to_bookmark_updates_bookmark_test() {
-  use bc <- with_test_db()
+  use bc, _ <- with_test_conn()
 
   let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
 
@@ -66,7 +89,7 @@ pub fn add_tags_to_bookmark_updates_bookmark_test() {
 }
 
 pub fn add_tags_to_bookmark_is_idempotent_test() {
-  use bc <- with_test_db()
+  use bc, _ <- with_test_conn()
 
   let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
 
@@ -77,7 +100,7 @@ pub fn add_tags_to_bookmark_is_idempotent_test() {
 }
 
 pub fn add_tags_to_bookmark_merges_with_existing_tags_test() {
-  use bc <- with_test_db()
+  use bc, _ <- with_test_conn()
 
   let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
 

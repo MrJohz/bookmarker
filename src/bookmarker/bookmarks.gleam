@@ -9,14 +9,15 @@ import gleam/list
 import gleam/option.{type Option}
 import gleam/result
 import gleam/string
+import gleam/time/timestamp.{type Timestamp}
 import sqlight.{type Connection, type Error, type Value}
 
 pub opaque type BookmarkConn {
-  Bookmarks(db: Connection)
+  Bookmarks(db: Connection, now: fn() -> Timestamp)
 }
 
-pub fn new(db: Connection) -> BookmarkConn {
-  Bookmarks(db)
+pub fn new(db: Connection, now: fn() -> Timestamp) -> BookmarkConn {
+  Bookmarks(db, now)
 }
 
 pub opaque type BookmarkId {
@@ -30,6 +31,7 @@ pub type Bookmark {
     title: Option(String),
     tags: Option(List(String)),
     archives: Option(List(String)),
+    created_at: Timestamp,
   )
 }
 
@@ -41,6 +43,7 @@ pub fn list_bookmarks(bc: BookmarkConn) -> Result(List(Bookmark), Error) {
       s.col("bookmarks.id"),
       s.col("bookmarks.url"),
       s.col("bookmarks.title"),
+      s.col("bookmarks.created_at"),
     ])
     |> s.to_query
     |> sqlite_dialect.read_query_to_prepared_statement
@@ -51,26 +54,31 @@ pub fn list_bookmarks(bc: BookmarkConn) -> Result(List(Bookmark), Error) {
       use id <- decode.field(0, decode.int)
       use url <- decode.field(1, decode.string)
       use title <- decode.field(2, decode.string |> decode.optional)
-      decode.success(#(BookmarkId(id), url, title))
+      use created_at <- decode.field(3, decode.int |> decode.map(millis_to_ts))
+
+      decode.success(#(BookmarkId(id), url, title, created_at))
     }),
   )
 
   entries
   |> list.try_map(fn(tup) {
-    let #(id, url, title) = tup
+    let #(id, url, title, created_at) = tup
     use tags <- result.try(list_tags(bc, id))
     use archives <- result.try(list_archives(bc, id))
-    Ok(Bookmark(id:, url:, title:, tags:, archives:))
+    Ok(Bookmark(id:, url:, title:, tags:, archives:, created_at:))
   })
 }
 
 pub fn add_bookmark(bc: BookmarkConn, url: String) -> Result(Bookmark, Error) {
   let prepared =
     [
-      i.row([i.string(url)]),
+      i.row([
+        i.string(url),
+        i.int(bc.now() |> ts_to_millis),
+      ]),
     ]
-    |> i.from_values(table_name: "bookmarks", columns: ["url"])
-    |> i.returning(["id", "url"])
+    |> i.from_values(table_name: "bookmarks", columns: ["url", "created_at"])
+    |> i.returning(["id", "url", "created_at"])
     |> i.to_query
     |> sqlite_dialect.write_query_to_prepared_statement
 
@@ -81,9 +89,12 @@ pub fn add_bookmark(bc: BookmarkConn, url: String) -> Result(Bookmark, Error) {
     sqlight.query(sql, on: bc.db, with:, expecting: {
       use id <- decode.field(0, decode.int)
       use url <- decode.field(1, decode.string)
+      use created_at <- decode.field(2, decode.int |> decode.map(millis_to_ts))
+
       decode.success(Bookmark(
         id: BookmarkId(id),
         url:,
+        created_at:,
         title: option.None,
         tags: option.None,
         archives: option.None,
@@ -178,4 +189,16 @@ fn param_to_value(p: param.Param) -> Value {
     param.NullParam -> sqlight.null()
     param.DateParam(_) -> panic as "no date columns in this query yet"
   }
+}
+
+fn ts_to_millis(ts: Timestamp) -> Int {
+  let #(seconds, nanoseconds) = timestamp.to_unix_seconds_and_nanoseconds(ts)
+  seconds * 1000 + nanoseconds / 1_000_000
+}
+
+fn millis_to_ts(total: Int) -> Timestamp {
+  timestamp.from_unix_seconds_and_nanoseconds(
+    seconds: total / 1000,
+    nanoseconds: { total % 1000 } * 1_000_000,
+  )
 }

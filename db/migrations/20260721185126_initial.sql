@@ -4,7 +4,7 @@ CREATE TABLE
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     url TEXT NOT NULL,
     title TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME NOT NULL
   );
 
 CREATE TABLE
@@ -13,7 +13,7 @@ CREATE TABLE
     bookmark_id INTEGER NOT NULL,
     url TEXT NOT NULL,
     host TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME NOT NULL,
     FOREIGN KEY (bookmark_id) REFERENCES bookmarks (id)
   );
 
@@ -30,7 +30,7 @@ CREATE TABLE
   changelog (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bookmark_id INTEGER NOT NULL,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL,
     change_kind TEXT NOT NULL,
     change_detail TEXT,
     FOREIGN KEY (bookmark_id) REFERENCES bookmarks (id)
