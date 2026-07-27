@@ -27,6 +27,43 @@ CREATE TABLE
   );
 
 CREATE TABLE
+  jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bookmark_id INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (
+      status IN ('pending', 'running', 'completed', 'errored')
+    ),
+    created_at DATETIME NOT NULL,
+    started_at DATETIME,
+    completed_at DATETIME,
+    detail TEXT,
+    FOREIGN KEY (bookmark_id) REFERENCES bookmarks (id),
+    CHECK (
+      (
+        status = 'pending'
+        AND completed_at IS NULL
+      )
+      OR (
+        status = 'running'
+        AND completed_at IS NULL
+      )
+      OR (
+        status = 'completed'
+        AND completed_at IS NOT NULL
+      )
+      OR (
+        status = 'errored'
+        AND completed_at IS NOT NULL
+        AND detail IS NOT NULL
+      )
+    )
+  );
+
+CREATE UNIQUE INDEX one_pending_job_per_bookmark ON jobs (bookmark_id)
+WHERE
+  status = 'pending';
+
+CREATE TABLE
   changelog (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bookmark_id INTEGER NOT NULL,
@@ -37,6 +74,8 @@ CREATE TABLE
   );
 
 -- migrate:down
+DROP TABLE IF EXISTS jobs;
+
 DROP TABLE IF EXISTS changelog;
 
 DROP TABLE IF EXISTS tags;

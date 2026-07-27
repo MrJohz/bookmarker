@@ -1,7 +1,7 @@
+import bookmarker/utils
 import cake
 import cake/dialect/sqlite_dialect
 import cake/insert as i
-import cake/param
 import cake/select as s
 import cake/where as w
 import gleam/dynamic/decode
@@ -10,7 +10,7 @@ import gleam/option.{type Option}
 import gleam/result
 import gleam/string
 import gleam/time/timestamp.{type Timestamp}
-import sqlight.{type Connection, type Error, type Value}
+import sqlight.{type Connection, type Error}
 
 pub opaque type BookmarkConn {
   Bookmarks(db: Connection, now: fn() -> Timestamp)
@@ -22,6 +22,15 @@ pub fn new(db: Connection, now: fn() -> Timestamp) -> BookmarkConn {
 
 pub opaque type BookmarkId {
   BookmarkId(Int)
+}
+
+pub fn id_decoder() -> decode.Decoder(BookmarkId) {
+  decode.int |> decode.map(BookmarkId)
+}
+
+pub fn id_to_int(id: BookmarkId) -> Int {
+  let BookmarkId(value) = id
+  value
 }
 
 pub type Bookmark {
@@ -51,12 +60,12 @@ pub fn list_bookmarks(bc: BookmarkConn) -> Result(List(Bookmark), Error) {
 
   use entries <- result.try(
     sqlight.query(sql, on: bc.db, with: [], expecting: {
-      use id <- decode.field(0, decode.int)
+      use id <- decode.field(0, id_decoder())
       use url <- decode.field(1, decode.string)
       use title <- decode.field(2, decode.string |> decode.optional)
-      use created_at <- decode.field(3, decode.int |> decode.map(millis_to_ts))
+      use created_at <- decode.field(3, utils.timestamp_decoder())
 
-      decode.success(#(BookmarkId(id), url, title, created_at))
+      decode.success(#(id, url, title, created_at))
     }),
   )
 
@@ -74,7 +83,7 @@ pub fn add_bookmark(bc: BookmarkConn, url: String) -> Result(Bookmark, Error) {
     [
       i.row([
         i.string(url),
-        i.int(bc.now() |> ts_to_millis),
+        i.int(bc.now() |> utils.timestamp_to_millis),
       ]),
     ]
     |> i.from_values(table_name: "bookmarks", columns: ["url", "created_at"])
@@ -83,16 +92,16 @@ pub fn add_bookmark(bc: BookmarkConn, url: String) -> Result(Bookmark, Error) {
     |> sqlite_dialect.write_query_to_prepared_statement
 
   let sql = cake.get_sql(prepared)
-  let with = cake.get_params(prepared) |> list.map(param_to_value)
+  let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
 
   use entries <- result.try(
     sqlight.query(sql, on: bc.db, with:, expecting: {
-      use id <- decode.field(0, decode.int)
+      use id <- decode.field(0, id_decoder())
       use url <- decode.field(1, decode.string)
-      use created_at <- decode.field(2, decode.int |> decode.map(millis_to_ts))
+      use created_at <- decode.field(2, utils.timestamp_decoder())
 
       decode.success(Bookmark(
-        id: BookmarkId(id),
+        id:,
         url:,
         created_at:,
         title: option.None,
@@ -125,7 +134,7 @@ pub fn add_tags(
     |> sqlite_dialect.write_query_to_prepared_statement
 
   let sql = cake.get_sql(prepared)
-  let with = cake.get_params(prepared) |> list.map(param_to_value)
+  let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
 
   use _ <- result.try(
     sqlight.query(sql, on: bc.db, with:, expecting: { decode.success(Nil) }),
@@ -165,7 +174,7 @@ fn list_tags(
     |> sqlite_dialect.read_query_to_prepared_statement
 
   let sql = cake.get_sql(prepared)
-  let with = cake.get_params(prepared) |> list.map(param_to_value)
+  let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
 
   use entries <- result.try(
     sqlight.query(sql, on: bc.db, with:, expecting: {
@@ -178,27 +187,4 @@ fn list_tags(
     [] -> Ok(option.None)
     _ -> Ok(option.Some(entries |> list.sort(string.compare)))
   }
-}
-
-fn param_to_value(p: param.Param) -> Value {
-  case p {
-    param.StringParam(v) -> sqlight.text(v)
-    param.IntParam(v) -> sqlight.int(v)
-    param.FloatParam(v) -> sqlight.float(v)
-    param.BoolParam(v) -> sqlight.bool(v)
-    param.NullParam -> sqlight.null()
-    param.DateParam(_) -> panic as "no date columns in this query yet"
-  }
-}
-
-fn ts_to_millis(ts: Timestamp) -> Int {
-  let #(seconds, nanoseconds) = timestamp.to_unix_seconds_and_nanoseconds(ts)
-  seconds * 1000 + nanoseconds / 1_000_000
-}
-
-fn millis_to_ts(total: Int) -> Timestamp {
-  timestamp.from_unix_seconds_and_nanoseconds(
-    seconds: total / 1000,
-    nanoseconds: { total % 1000 } * 1_000_000,
-  )
 }
