@@ -1,4 +1,5 @@
 import bookmarker/bookmarks.{type BookmarkConn}
+import bookmarker/db
 import gleam/option.{None}
 import gleam/time/timestamp
 import gleeunit/should
@@ -16,7 +17,7 @@ type Deps {
 }
 
 fn with_test_conn(f: fn(BookmarkConn, Deps) -> a) -> a {
-  use conn <- sqlight.with_connection(":memory:")
+  use conn <- db.with_connection(":memory:")
   let assert Ok(schema) = simplifile.read("db/schema.sql")
   let assert Ok(Nil) = sqlight.exec(schema, on: conn)
 
@@ -44,8 +45,8 @@ pub fn list_bookmarks_with_unarchived_entry_test() {
       created_at:,
       url:,
       title: None,
-      tags: None,
-      archives: None,
+      tags: [],
+      archives: [],
     ),
   ]) = bookmarks.list_bookmarks(bc)
 
@@ -66,8 +67,8 @@ pub fn create_bookmark_returns_bookmark_test() {
     created_at:,
     url:,
     title: None,
-    tags: None,
-    archives: None,
+    tags: [],
+    archives: [],
   ) = bookmark
 
   created_at |> should.equal(now)
@@ -85,7 +86,7 @@ pub fn add_tags_to_bookmark_updates_bookmark_test() {
 
   let assert Ok(bookmark) = bookmarks.add_tags(bc, bookmark, ["tag1", "tag2"])
 
-  bookmark.tags |> should.equal(option.Some(["tag1", "tag2"]))
+  bookmark.tags |> should.equal(["tag1", "tag2"])
 }
 
 pub fn add_tags_to_bookmark_is_idempotent_test() {
@@ -96,7 +97,7 @@ pub fn add_tags_to_bookmark_is_idempotent_test() {
   let assert Ok(_) = bookmarks.add_tags(bc, bookmark, ["tag1", "tag2"])
   let assert Ok(bookmark) = bookmarks.add_tags(bc, bookmark, ["tag1", "tag2"])
 
-  bookmark.tags |> should.equal(option.Some(["tag1", "tag2"]))
+  bookmark.tags |> should.equal(["tag1", "tag2"])
 }
 
 pub fn add_tags_to_bookmark_merges_with_existing_tags_test() {
@@ -107,5 +108,28 @@ pub fn add_tags_to_bookmark_merges_with_existing_tags_test() {
   let assert Ok(bookmark) = bookmarks.add_tags(bc, bookmark, ["tag1", "tag2"])
   let assert Ok(bookmark) = bookmarks.add_tags(bc, bookmark, ["tag2", "tag3"])
 
-  bookmark.tags |> should.equal(option.Some(["tag1", "tag2", "tag3"]))
+  bookmark.tags |> should.equal(["tag1", "tag2", "tag3"])
+}
+
+pub fn add_no_tags_produces_an_unchanged_bookmark_test() {
+  use bc, _ <- with_test_conn()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(bookmark2) = bookmarks.add_tags(bc, bookmark, [])
+
+  bookmark |> should.equal(bookmark2)
+  bookmark.tags |> should.equal([])
+}
+
+pub fn bookmark_tags_are_fetched_fresh_test() {
+  use bc, _ <- with_test_conn()
+
+  let assert Ok(original) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(bookmark1) = bookmarks.add_tags(bc, original, ["tag1", "tag2"])
+  let assert Ok(bookmark2) = bookmarks.add_tags(bc, original, ["tag2", "tag3"])
+
+  bookmark1.tags |> should.equal(["tag1", "tag2"])
+  bookmark2.tags |> should.equal(["tag1", "tag2", "tag3"])
 }

@@ -8,7 +8,6 @@ import gleam/dynamic/decode
 import gleam/list
 import gleam/option.{type Option}
 import gleam/result
-import gleam/string
 import gleam/time/timestamp.{type Timestamp}
 import sqlight.{type Connection, type Error}
 
@@ -38,8 +37,8 @@ pub type Bookmark {
     id: BookmarkId,
     url: String,
     title: Option(String),
-    tags: Option(List(String)),
-    archives: Option(List(String)),
+    tags: List(String),
+    archives: List(String),
     created_at: Timestamp,
   )
 }
@@ -100,14 +99,16 @@ pub fn add_bookmark(bc: BookmarkConn, url: String) -> Result(Bookmark, Error) {
       use url <- decode.field(1, decode.string)
       use created_at <- decode.field(2, utils.timestamp_decoder())
 
-      decode.success(Bookmark(
-        id:,
-        url:,
-        created_at:,
-        title: option.None,
-        tags: option.None,
-        archives: option.None,
-      ))
+      decode.success(
+        Bookmark(
+          id:,
+          url:,
+          created_at:,
+          title: option.None,
+          tags: [],
+          archives: [],
+        ),
+      )
     }),
   )
 
@@ -121,55 +122,53 @@ pub fn add_tags(
   bm: Bookmark,
   tags: List(String),
 ) -> Result(Bookmark, Error) {
-  let BookmarkId(id) = bm.id
-  let prepared =
-    tags
-    |> list.map(fn(tag) {
-      [i.string(tag), i.int(id)]
-      |> i.row
-    })
-    |> i.from_values(table_name: "tags", columns: ["tag", "bookmark_id"])
-    |> i.on_columns_conflict_ignore(["tag", "bookmark_id"], where: w.none())
-    |> i.to_query
-    |> sqlite_dialect.write_query_to_prepared_statement
+  use _ <- result.try(case tags {
+    [] -> Ok(Nil)
+    tags -> {
+      let BookmarkId(id) = bm.id
+      let prepared =
+        tags
+        |> list.map(fn(tag) {
+          [i.string(tag), i.int(id)]
+          |> i.row
+        })
+        |> i.from_values(table_name: "tags", columns: ["tag", "bookmark_id"])
+        |> i.on_columns_conflict_ignore(["tag", "bookmark_id"], where: w.none())
+        |> i.to_query
+        |> sqlite_dialect.write_query_to_prepared_statement
 
-  let sql = cake.get_sql(prepared)
-  let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
+      let sql = cake.get_sql(prepared)
+      let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
 
-  use _ <- result.try(
-    sqlight.query(sql, on: bc.db, with:, expecting: { decode.success(Nil) }),
-  )
+      use _ <- result.try(
+        sqlight.query(sql, on: bc.db, with:, expecting: { decode.success(Nil) }),
+      )
+      Ok(Nil)
+    }
+  })
 
-  let merged =
-    list.append(option.unwrap(bm.tags, []), tags)
-    |> list.unique
-    |> list.sort(string.compare)
-
-  Ok(
-    Bookmark(..bm, tags: case merged {
-      [] -> option.None
-      sorted -> option.Some(sorted)
-    }),
-  )
+  use tags <- result.try(list_tags(bc, bm.id))
+  Ok(Bookmark(..bm, tags:))
 }
 
 fn list_archives(
   _bc: BookmarkConn,
   _bookmark: BookmarkId,
-) -> Result(Option(List(String)), Error) {
-  Ok(option.None)
+) -> Result(List(String), Error) {
+  Ok([])
 }
 
 fn list_tags(
   bc: BookmarkConn,
   bookmark: BookmarkId,
-) -> Result(Option(List(String)), Error) {
+) -> Result(List(String), Error) {
   let BookmarkId(id) = bookmark
   let prepared =
     s.new()
     |> s.from_table("tags")
     |> s.where(w.col("tags.bookmark_id") |> w.eq(w.int(id)))
     |> s.selects([s.col("tags.tag")])
+    |> s.order_by("tags.tag", s.Asc)
     |> s.to_query
     |> sqlite_dialect.read_query_to_prepared_statement
 
@@ -183,8 +182,5 @@ fn list_tags(
     }),
   )
 
-  case entries {
-    [] -> Ok(option.None)
-    _ -> Ok(option.Some(entries |> list.sort(string.compare)))
-  }
+  Ok(entries)
 }

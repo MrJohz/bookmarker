@@ -6,7 +6,7 @@ import cake/update as u
 import cake/where as w
 import gleam/dynamic/decode
 import gleam/list
-import gleam/option.{type Option}
+import gleam/option.{type Option, Some}
 import gleam/result
 import gleam/time/timestamp.{type Timestamp}
 import sqlight.{type Connection, type Error}
@@ -14,11 +14,11 @@ import sqlight.{type Connection, type Error}
 import bookmarker/bookmarks
 
 pub opaque type JobsConn {
-  Bookmarks(db: Connection, now: fn() -> Timestamp)
+  JobsConn(db: Connection, now: fn() -> Timestamp)
 }
 
 pub fn new(db: Connection, now: fn() -> Timestamp) -> JobsConn {
-  Bookmarks(db, now)
+  JobsConn(db, now)
 }
 
 pub opaque type JobId {
@@ -62,6 +62,78 @@ pub fn list_pending(jc: JobsConn) -> Result(List(Job), Error) {
   let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
 
   sqlight.query(sql, on: jc.db, with:, expecting: pending_job_decoder())
+}
+
+pub fn list_for_bookmark(
+  jc: JobsConn,
+  bm: bookmarks.Bookmark,
+) -> Result(List(Job), Error) {
+  let prepared =
+    s.new()
+    |> s.from_table("jobs")
+    |> s.selects([
+      s.col("jobs.id"),
+      s.col("jobs.bookmark_id"),
+      s.col("jobs.status"),
+      s.col("jobs.created_at"),
+      s.col("jobs.started_at"),
+      s.col("jobs.completed_at"),
+      s.col("jobs.detail"),
+    ])
+    |> s.where(
+      w.col("jobs.bookmark_id") |> w.eq(w.int(bookmarks.id_to_int(bm.id))),
+    )
+    |> s.to_query
+    |> sqlite_dialect.read_query_to_prepared_statement
+
+  let sql = cake.get_sql(prepared)
+  let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
+
+  sqlight.query(sql, on: jc.db, with:, expecting: {
+    use id <- decode.field(0, decode.int)
+    use bookmark <- decode.field(1, bookmarks.id_decoder())
+    use status <- decode.field(2, decode.string)
+    use created_at <- decode.field(3, utils.timestamp_decoder())
+    use started_at <- decode.field(
+      4,
+      utils.timestamp_decoder() |> decode.optional,
+    )
+    use completed_at <- decode.field(
+      5,
+      utils.timestamp_decoder() |> decode.optional,
+    )
+    use detail <- decode.field(6, decode.string |> decode.optional)
+
+    case status, started_at, completed_at, detail {
+      "pending", _, _, _ ->
+        Job(JobId(id), bookmark:, created_at:, status: Pending)
+        |> decode.success
+      "running", Some(started_at), _, _ ->
+        Job(JobId(id), bookmark:, created_at:, status: Started(started_at:))
+        |> decode.success
+      "completed", Some(started_at), Some(completed_at), detail ->
+        Job(
+          JobId(id),
+          bookmark:,
+          created_at:,
+          status: Completed(started_at:, completed_at:, detail:),
+        )
+        |> decode.success
+      "failed", Some(started_at), Some(completed_at), Some(error) ->
+        Job(
+          JobId(id),
+          bookmark:,
+          created_at:,
+          status: Errored(started_at:, completed_at:, error:),
+        )
+        |> decode.success
+      _, _, _, _ ->
+        decode.failure(
+          Job(JobId(id), bookmark:, created_at:, status: Pending),
+          "Job",
+        )
+    }
+  })
 }
 
 pub fn schedule_job(
@@ -137,23 +209,24 @@ pub fn start_job(jc: JobsConn, job: Job) -> Result(Option(Job), Error) {
         w.col("jobs.status") |> w.eq(w.string("pending")),
       ]),
     )
-    |> u.returning(["id"])
+    |> u.returning(["started_at"])
     |> u.to_query
     |> sqlite_dialect.write_query_to_prepared_statement
 
   let sql = cake.get_sql(prepared)
   let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
 
-  use entries <- result.try(sqlight.query(
-    sql,
-    on: jc.db,
-    with:,
-    expecting: decode.success(Nil),
-  ))
+  use entries <- result.try(
+    sqlight.query(sql, on: jc.db, with:, expecting: {
+      use started_at <- decode.field(0, utils.timestamp_decoder())
+      decode.success(started_at)
+    }),
+  )
 
   case entries {
     [] -> Ok(option.None)
-    _ -> Ok(option.Some(Job(..job, status: Started(started_at:))))
+    [started_at, ..] ->
+      Ok(option.Some(Job(..job, status: Started(started_at:))))
   }
 }
 
@@ -187,23 +260,24 @@ pub fn complete_job(
         w.col("jobs.status") |> w.eq(w.string("running")),
       ]),
     )
-    |> u.returning(["started_at"])
+    |> u.returning(["started_at", "completed_at"])
     |> u.to_query
     |> sqlite_dialect.write_query_to_prepared_statement
 
   let sql = cake.get_sql(prepared)
   let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
 
-  use entries <- result.try(sqlight.query(
-    sql,
-    on: jc.db,
-    with:,
-    expecting: started_at_decoder(),
-  ))
+  use entries <- result.try(
+    sqlight.query(sql, on: jc.db, with:, expecting: {
+      use started_at <- decode.field(0, utils.timestamp_decoder())
+      use completed_at <- decode.field(1, utils.timestamp_decoder())
+      decode.success(#(started_at, completed_at))
+    }),
+  )
 
   case entries {
     [] -> Ok(option.None)
-    [started_at, ..] ->
+    [#(started_at, completed_at), ..] ->
       Ok(option.Some(
         Job(..job, status: Completed(started_at:, completed_at:, detail:)),
       ))
@@ -232,32 +306,28 @@ pub fn fail_job(
         w.col("jobs.status") |> w.eq(w.string("running")),
       ]),
     )
-    |> u.returning(["started_at"])
+    |> u.returning(["started_at", "completed_at"])
     |> u.to_query
     |> sqlite_dialect.write_query_to_prepared_statement
 
   let sql = cake.get_sql(prepared)
   let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
 
-  use entries <- result.try(sqlight.query(
-    sql,
-    on: jc.db,
-    with:,
-    expecting: started_at_decoder(),
-  ))
+  use entries <- result.try(
+    sqlight.query(sql, on: jc.db, with:, expecting: {
+      use started_at <- decode.field(0, utils.timestamp_decoder())
+      use completed_at <- decode.field(1, utils.timestamp_decoder())
+      decode.success(#(started_at, completed_at))
+    }),
+  )
 
   case entries {
     [] -> Ok(option.None)
-    [started_at, ..] ->
+    [#(started_at, completed_at), ..] ->
       Ok(option.Some(
         Job(..job, status: Errored(started_at:, completed_at:, error:)),
       ))
   }
-}
-
-fn started_at_decoder() -> decode.Decoder(Timestamp) {
-  use started_at <- decode.field(0, utils.timestamp_decoder())
-  decode.success(started_at)
 }
 
 fn pending_job_decoder() -> decode.Decoder(Job) {

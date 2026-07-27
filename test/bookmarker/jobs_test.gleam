@@ -1,4 +1,5 @@
 import bookmarker/bookmarks.{type BookmarkConn}
+import bookmarker/db
 import bookmarker/jobs.{type JobsConn}
 import gleam/option
 import gleam/time/timestamp
@@ -17,7 +18,7 @@ type Deps {
 }
 
 fn with_test_conn(f: fn(JobsConn, BookmarkConn, Deps) -> a) -> a {
-  use conn <- sqlight.with_connection(":memory:")
+  use conn <- db.with_connection(":memory:")
   let assert Ok(schema) = simplifile.read("db/schema.sql")
   let assert Ok(Nil) = sqlight.exec(schema, on: conn)
 
@@ -172,4 +173,50 @@ pub fn schedule_job_is_idempotent_test() {
 
   first |> should.equal(second)
   jobs.list_pending(jc) |> should.equal(Ok([first]))
+}
+
+pub fn created_at_is_stable_across_reads_test() {
+  use jc, bc, Deps(clock:, ..) <- with_test_conn()
+
+  mock_clock.set(clock, ts("2026-01-05T00:05:10.123456789Z"))
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+  let assert Ok(job1) = jobs.schedule_job(jc, bookmark)
+  let assert Ok([job2]) = jobs.list_for_bookmark(jc, bookmark)
+
+  job1.created_at |> should.equal(job2.created_at)
+  job1 |> should.equal(job2)
+}
+
+pub fn started_at_is_stable_across_reads_test() {
+  use jc, bc, Deps(clock:, ..) <- with_test_conn()
+
+  mock_clock.set(clock, ts("2026-01-05T00:06:00.123456789Z"))
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+  let assert Ok(job) = jobs.schedule_job(jc, bookmark)
+
+  let assert Ok(option.Some(job1)) = jobs.start_job(jc, job)
+  let assert jobs.Started(started_at: job1_started_at) = job1.status
+  let assert Ok([job2]) = jobs.list_for_bookmark(jc, bookmark)
+  let assert jobs.Started(started_at: job2_started_at) = job2.status
+
+  job1_started_at |> should.equal(job2_started_at)
+  job1 |> should.equal(job2)
+}
+
+pub fn completed_at_is_stable_across_reads_test() {
+  use jc, bc, Deps(clock:, ..) <- with_test_conn()
+
+  mock_clock.set(clock, ts("2026-01-05T00:06:00.123456789Z"))
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+  let assert Ok(job) = jobs.schedule_job(jc, bookmark)
+  let assert Ok(option.Some(_)) = jobs.start_job(jc, job)
+
+  let assert Ok(option.Some(job1)) = jobs.complete_job(jc, job, option.None)
+  let assert jobs.Completed(completed_at: job1_completed_at, ..) = job1.status
+  let assert Ok([job2]) = jobs.list_for_bookmark(jc, bookmark)
+  let assert jobs.Completed(completed_at: job2_completed_at, ..) = job2.status
+
+  job1_completed_at |> should.equal(job2_completed_at)
+  job1 |> should.equal(job2)
 }
