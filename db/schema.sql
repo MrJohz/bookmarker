@@ -11,7 +11,8 @@ CREATE TABLE archives (
     url TEXT NOT NULL,
     host TEXT NOT NULL,
     created_at INTEGER NOT NULL,
-    FOREIGN KEY (bookmark_id) REFERENCES bookmarks (id)
+    FOREIGN KEY (bookmark_id) REFERENCES bookmarks (id),
+    UNIQUE (bookmark_id, host)
   ) strict;
 CREATE TABLE tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

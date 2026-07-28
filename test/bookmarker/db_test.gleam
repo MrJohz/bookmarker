@@ -59,3 +59,27 @@ pub fn foreign_keys_are_enforced_test() {
 
   code |> should.equal(sqlight.ConstraintForeignkey)
 }
+
+pub fn archives_are_unique_per_bookmark_and_host_test() {
+  use conn <- db.with_connection(":memory:")
+  let assert Ok(schema) = simplifile.read("db/schema.sql")
+  let assert Ok(Nil) = sqlight.exec(schema, on: conn)
+
+  let assert Ok(Nil) =
+    sqlight.exec(
+      "INSERT INTO bookmarks (id, url, created_at)
+       VALUES (1, 'http://example.com', 0);
+       INSERT INTO archives (bookmark_id, url, host, created_at)
+       VALUES (1, 'http://web.archive.org/1', 'web.archive.org', 0);",
+      on: conn,
+    )
+
+  let insert =
+    "INSERT INTO archives (bookmark_id, url, host, created_at)
+     VALUES (1, 'http://web.archive.org/2', 'web.archive.org', 0);"
+
+  let assert Error(sqlight.SqlightError(code, _, _)) =
+    sqlight.exec(insert, on: conn)
+
+  code |> should.equal(sqlight.ConstraintUnique)
+}
