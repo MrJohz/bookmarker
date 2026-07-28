@@ -3,6 +3,7 @@ import cake
 import cake/dialect/sqlite_dialect
 import cake/insert as i
 import cake/select as s
+import cake/update as u
 import cake/where as w
 import gleam/dynamic/decode
 import gleam/list
@@ -32,13 +33,22 @@ pub fn id_to_int(id: BookmarkId) -> Int {
   value
 }
 
+/// A snapshot of a bookmark held by an archiving service.
+///
+/// `host` names the service (e.g. `web.archive.org`) and is unique per
+/// bookmark, so it identifies the archive; `created_at` is when we last
+/// recorded a URL for that service, which is how fresh the snapshot is.
+pub type Archive {
+  Archive(host: String, url: String, created_at: Timestamp)
+}
+
 pub type Bookmark {
   Bookmark(
     id: BookmarkId,
     url: String,
     title: Option(String),
     tags: List(String),
-    archives: List(String),
+    archives: List(Archive),
     created_at: Timestamp,
   )
 }
@@ -151,11 +161,127 @@ pub fn add_tags(
   Ok(Bookmark(..bm, tags:))
 }
 
+/// Record the archive of `bm` held by `host` (the archiving service, e.g.
+/// `web.archive.org`) at `url`.
+///
+/// We keep at most one archive per host per bookmark, so re-archiving replaces
+/// the URL we hold rather than accumulating rows — `UNIQUE (bookmark_id, host)`
+/// plus the upsert below make that a single statement, which is how we get
+/// atomicity without a transaction.
+pub fn add_archive(
+  bc: BookmarkConn,
+  bm: Bookmark,
+  host: String,
+  url: String,
+) -> Result(Bookmark, Error) {
+  let BookmarkId(id) = bm.id
+  let created_at = bc.now() |> utils.timestamp_to_millis
+
+  let prepared =
+    [i.row([i.int(id), i.string(host), i.string(url), i.int(created_at)])]
+    |> i.from_values(table_name: "archives", columns: [
+      "bookmark_id",
+      "host",
+      "url",
+      "created_at",
+    ])
+    |> i.on_columns_conflict_update(
+      ["bookmark_id", "host"],
+      where: w.none(),
+      update: u.new()
+        |> u.sets([
+          u.set_string("url", url),
+          u.set_int("created_at", created_at),
+        ]),
+    )
+    |> i.to_query
+    |> sqlite_dialect.write_query_to_prepared_statement
+
+  let sql = cake.get_sql(prepared)
+  let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
+
+  use _ <- result.try(
+    sqlight.query(sql, on: bc.db, with:, expecting: { decode.success(Nil) }),
+  )
+
+  use archives <- result.try(list_archives(bc, bm.id))
+  Ok(Bookmark(..bm, archives:))
+}
+
+/// Set (or, with `None`, clear) the title of `bm`.
+///
+/// Titles are filled in later by the scraper, so this always overwrites — a
+/// re-scrape refreshes a stale title, and `None` lets a caller drop one that
+/// turned out to be wrong. We rebuild from the `RETURNING` value rather than
+/// from the argument so the record we hand back is what the database actually
+/// stores.
+pub fn set_title(
+  bc: BookmarkConn,
+  bm: Bookmark,
+  title: Option(String),
+) -> Result(Bookmark, Error) {
+  let BookmarkId(id) = bm.id
+
+  let prepared =
+    u.new()
+    |> u.table("bookmarks")
+    |> u.sets([
+      case title {
+        option.Some(title) -> u.set_string("title", title)
+        option.None -> u.set_null("title")
+      },
+    ])
+    |> u.where(w.col("bookmarks.id") |> w.eq(w.int(id)))
+    |> u.returning(["title"])
+    |> u.to_query
+    |> sqlite_dialect.write_query_to_prepared_statement
+
+  let sql = cake.get_sql(prepared)
+  let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
+
+  use entries <- result.try(
+    sqlight.query(sql, on: bc.db, with:, expecting: {
+      use title <- decode.field(0, decode.string |> decode.optional)
+      decode.success(title)
+    }),
+  )
+
+  let assert [title] = entries
+
+  Ok(Bookmark(..bm, title:))
+}
+
 fn list_archives(
-  _bc: BookmarkConn,
-  _bookmark: BookmarkId,
-) -> Result(List(String), Error) {
-  Ok([])
+  bc: BookmarkConn,
+  bookmark: BookmarkId,
+) -> Result(List(Archive), Error) {
+  let BookmarkId(id) = bookmark
+  let prepared =
+    s.new()
+    |> s.from_table("archives")
+    |> s.where(w.col("archives.bookmark_id") |> w.eq(w.int(id)))
+    |> s.selects([
+      s.col("archives.host"),
+      s.col("archives.url"),
+      s.col("archives.created_at"),
+    ])
+    |> s.order_by("archives.host", s.Asc)
+    |> s.to_query
+    |> sqlite_dialect.read_query_to_prepared_statement
+
+  let sql = cake.get_sql(prepared)
+  let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
+
+  use entries <- result.try(
+    sqlight.query(sql, on: bc.db, with:, expecting: {
+      use host <- decode.field(0, decode.string)
+      use url <- decode.field(1, decode.string)
+      use created_at <- decode.field(2, utils.timestamp_decoder())
+      decode.success(Archive(host:, url:, created_at:))
+    }),
+  )
+
+  Ok(entries)
 }
 
 fn list_tags(
