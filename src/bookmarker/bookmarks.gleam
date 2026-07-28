@@ -33,13 +33,22 @@ pub fn id_to_int(id: BookmarkId) -> Int {
   value
 }
 
+/// A snapshot of a bookmark held by an archiving service.
+///
+/// `host` names the service (e.g. `web.archive.org`) and is unique per
+/// bookmark, so it identifies the archive; `created_at` is when we last
+/// recorded a URL for that service, which is how fresh the snapshot is.
+pub type Archive {
+  Archive(host: String, url: String, created_at: Timestamp)
+}
+
 pub type Bookmark {
   Bookmark(
     id: BookmarkId,
     url: String,
     title: Option(String),
     tags: List(String),
-    archives: List(String),
+    archives: List(Archive),
     created_at: Timestamp,
   )
 }
@@ -245,13 +254,17 @@ pub fn set_title(
 fn list_archives(
   bc: BookmarkConn,
   bookmark: BookmarkId,
-) -> Result(List(String), Error) {
+) -> Result(List(Archive), Error) {
   let BookmarkId(id) = bookmark
   let prepared =
     s.new()
     |> s.from_table("archives")
     |> s.where(w.col("archives.bookmark_id") |> w.eq(w.int(id)))
-    |> s.selects([s.col("archives.url")])
+    |> s.selects([
+      s.col("archives.host"),
+      s.col("archives.url"),
+      s.col("archives.created_at"),
+    ])
     |> s.order_by("archives.host", s.Asc)
     |> s.to_query
     |> sqlite_dialect.read_query_to_prepared_statement
@@ -261,8 +274,10 @@ fn list_archives(
 
   use entries <- result.try(
     sqlight.query(sql, on: bc.db, with:, expecting: {
-      use url <- decode.field(0, decode.string)
-      decode.success(url)
+      use host <- decode.field(0, decode.string)
+      use url <- decode.field(1, decode.string)
+      use created_at <- decode.field(2, utils.timestamp_decoder())
+      decode.success(Archive(host:, url:, created_at:))
     }),
   )
 

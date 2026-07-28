@@ -1,7 +1,5 @@
 import bookmarker/bookmarks.{type BookmarkConn}
 import bookmarker/db
-import bookmarker/utils
-import gleam/dynamic/decode
 import gleam/option.{None, Some}
 import gleam/time/timestamp
 import gleeunit/should
@@ -137,7 +135,10 @@ pub fn bookmark_tags_are_fetched_fresh_test() {
 }
 
 pub fn add_archive_to_bookmark_updates_bookmark_test() {
-  use bc, _ <- with_test_conn()
+  use bc, Deps(clock:, ..) <- with_test_conn()
+
+  let now = ts("2026-01-05T00:05:10Z")
+  mock_clock.set(clock, now)
 
   let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
 
@@ -149,11 +150,18 @@ pub fn add_archive_to_bookmark_updates_bookmark_test() {
       "http://web.archive.org/1",
     )
 
-  bookmark.archives |> should.equal(["http://web.archive.org/1"])
+  bookmark.archives
+  |> should.equal([
+    bookmarks.Archive(
+      host: "web.archive.org",
+      url: "http://web.archive.org/1",
+      created_at: now,
+    ),
+  ])
 }
 
 pub fn add_archive_replaces_the_archive_for_the_same_host_test() {
-  use bc, Deps(conn:, clock:) <- with_test_conn()
+  use bc, Deps(clock:, ..) <- with_test_conn()
 
   mock_clock.set(clock, ts("2026-01-05T00:05:10Z"))
 
@@ -176,28 +184,24 @@ pub fn add_archive_replaces_the_archive_for_the_same_host_test() {
       "http://web.archive.org/2",
     )
 
-  bookmark.archives |> should.equal(["http://web.archive.org/2"])
-
-  // `archives.created_at` isn't exposed on `Bookmark`, so read it directly.
-  // The single row proves the upsert replaced rather than appended, and the
-  // refreshed timestamp proves it replaced rather than ignoring the conflict —
-  // an ignored insert would have left the original `created_at` behind.
-  let assert Ok([created_at]) =
-    sqlight.query(
-      "SELECT created_at FROM archives;",
-      on: conn,
-      with: [],
-      expecting: {
-        use created_at <- decode.field(0, decode.int)
-        decode.success(created_at)
-      },
-    )
-
-  created_at |> should.equal(utils.timestamp_to_millis(updated_at))
+  // The single entry proves the upsert replaced rather than appended, and the
+  // refreshed `created_at` proves it replaced rather than ignoring the
+  // conflict — an ignored insert would have left the original timestamp behind.
+  bookmark.archives
+  |> should.equal([
+    bookmarks.Archive(
+      host: "web.archive.org",
+      url: "http://web.archive.org/2",
+      created_at: updated_at,
+    ),
+  ])
 }
 
 pub fn add_archive_keeps_archives_from_different_hosts_test() {
-  use bc, _ <- with_test_conn()
+  use bc, Deps(clock:, ..) <- with_test_conn()
+
+  let now = ts("2026-01-05T00:05:10Z")
+  mock_clock.set(clock, now)
 
   let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
 
@@ -213,11 +217,25 @@ pub fn add_archive_keeps_archives_from_different_hosts_test() {
 
   // Ordered by host, so `archive.ph` sorts before `web.archive.org`.
   bookmark.archives
-  |> should.equal(["http://archive.ph/1", "http://web.archive.org/1"])
+  |> should.equal([
+    bookmarks.Archive(
+      host: "archive.ph",
+      url: "http://archive.ph/1",
+      created_at: now,
+    ),
+    bookmarks.Archive(
+      host: "web.archive.org",
+      url: "http://web.archive.org/1",
+      created_at: now,
+    ),
+  ])
 }
 
 pub fn bookmark_archives_are_fetched_fresh_test() {
-  use bc, _ <- with_test_conn()
+  use bc, Deps(clock:, ..) <- with_test_conn()
+
+  let now = ts("2026-01-05T00:05:10Z")
+  mock_clock.set(clock, now)
 
   let assert Ok(original) = bookmarks.add_bookmark(bc, "http://example.com")
 
@@ -231,13 +249,28 @@ pub fn bookmark_archives_are_fetched_fresh_test() {
   let assert Ok(bookmark2) =
     bookmarks.add_archive(bc, original, "archive.ph", "http://archive.ph/1")
 
-  bookmark1.archives |> should.equal(["http://web.archive.org/1"])
-  bookmark2.archives
-  |> should.equal(["http://archive.ph/1", "http://web.archive.org/1"])
+  let wayback =
+    bookmarks.Archive(
+      host: "web.archive.org",
+      url: "http://web.archive.org/1",
+      created_at: now,
+    )
+  let archive_ph =
+    bookmarks.Archive(
+      host: "archive.ph",
+      url: "http://archive.ph/1",
+      created_at: now,
+    )
+
+  bookmark1.archives |> should.equal([wayback])
+  bookmark2.archives |> should.equal([archive_ph, wayback])
 }
 
 pub fn list_bookmarks_with_archived_entry_test() {
-  use bc, _ <- with_test_conn()
+  use bc, Deps(clock:, ..) <- with_test_conn()
+
+  let now = ts("2026-01-05T00:05:10Z")
+  mock_clock.set(clock, now)
 
   let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
   let assert Ok(_) =
@@ -251,7 +284,14 @@ pub fn list_bookmarks_with_archived_entry_test() {
   let assert Ok([bookmarks.Bookmark(archives:, ..)]) =
     bookmarks.list_bookmarks(bc)
 
-  archives |> should.equal(["http://web.archive.org/1"])
+  archives
+  |> should.equal([
+    bookmarks.Archive(
+      host: "web.archive.org",
+      url: "http://web.archive.org/1",
+      created_at: now,
+    ),
+  ])
 }
 
 pub fn set_title_updates_bookmark_test() {
