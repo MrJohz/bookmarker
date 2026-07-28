@@ -1,5 +1,7 @@
 import bookmarker/db
 import gleam/dynamic/decode
+import gleam/list
+import gleam/string
 import gleeunit/should
 import simplifile
 import sqlight
@@ -58,4 +60,69 @@ pub fn foreign_keys_are_enforced_test() {
     sqlight.exec(insert, on: conn)
 
   code |> should.equal(sqlight.ConstraintForeignkey)
+}
+
+/// The name and DDL of every object in a database, as SQLite stored it.
+///
+/// `schema_migrations` is dbmate's bookkeeping table, which only exists in the
+/// dump, and the `sqlite_%` objects (`sqlite_sequence`, implicit indexes) are
+/// derived from the DDL we're already comparing.
+fn schema_objects(conn: sqlight.Connection) -> List(#(String, String)) {
+  let query =
+    "SELECT name, sql FROM sqlite_master
+     WHERE sql IS NOT NULL
+       AND name NOT LIKE 'sqlite_%'
+       AND name != 'schema_migrations'
+     ORDER BY name;"
+
+  let assert Ok(objects) =
+    sqlight.query(query, on: conn, with: [], expecting: {
+      use name <- decode.field(0, decode.string)
+      use sql <- decode.field(1, decode.string)
+      decode.success(#(name, sql))
+    })
+
+  objects
+}
+
+/// `db/schema.sql` is dbmate's dump of the migrations, but nothing makes you
+/// regenerate it when you add or edit one — and the tests build their databases
+/// from the dump while real databases are built from the migrations. So build
+/// both and check they agree.
+///
+/// If this fails, regenerate the dump with `dbmate dump`. Don't hand-edit
+/// `db/schema.sql`: it is generated, and the next `dbmate` run will overwrite
+/// whatever you write there.
+pub fn schema_matches_migrations_test() {
+  use from_schema <- db.with_connection(":memory:")
+  use from_migrations <- db.with_connection(":memory:")
+
+  let assert Ok(dump) = simplifile.read("db/schema.sql")
+  let assert Ok(Nil) = sqlight.exec(dump, on: from_schema)
+
+  // dbmate names migrations `<timestamp>_<name>.sql`, so sorting by filename
+  // applies them in the order dbmate would.
+  let assert Ok(files) = simplifile.read_directory("db/migrations")
+  files
+  |> list.filter(string.ends_with(_, ".sql"))
+  |> list.sort(string.compare)
+  |> list.each(fn(file) {
+    let assert Ok(migration) = simplifile.read("db/migrations/" <> file)
+    // Running the whole file would create everything and then drop it again.
+    let assert [up, ..] = string.split(migration, "-- migrate:down")
+    let assert Ok(Nil) = sqlight.exec(up, on: from_migrations)
+  })
+
+  let schema = schema_objects(from_schema)
+  let migrations = schema_objects(from_migrations)
+
+  // Compare the names first and then each object on its own, so that a failure
+  // names what drifted instead of printing two entire schemas side by side.
+  let names = fn(objects: List(#(String, String))) {
+    list.map(objects, fn(object) { object.0 })
+  }
+  names(schema) |> should.equal(names(migrations))
+
+  list.zip(schema, migrations)
+  |> list.each(fn(pair) { pair.0 |> should.equal(pair.1) })
 }
