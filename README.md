@@ -1,24 +1,26 @@
-# bookmarker
+# Bookmarker
 
-[![Package Version](https://img.shields.io/hexpm/v/bookmarker)](https://hex.pm/packages/bookmarker)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/bookmarker/)
+A bookmark manager.  There are many like it, but this is mine, etc, etc.
 
-```sh
-gleam add bookmarker@1
-```
-```gleam
-import bookmarker
+> [!IMPORTANT]
+> This is a personal project.  Feel free to use it in any way you like (that's what the license is there for) but I wouldn't trust it particularly.  AI disclosure: most of this is written by hand, but some commits are fully vibed, as and how I was feeling on any particular day.
 
-pub fn main() -> Nil {
-  // TODO: An example of the project in use
-}
+## Running Tests
+
+```bash
+gleam test
+gleam format --check src test
 ```
 
-Further documentation can be found at <https://hexdocs.pm/bookmarker>.
+## Writing Code
 
-## Development
+See [docs/](./docs/) for some documentation.
 
-```sh
-gleam run   # Run the project
-gleam test  # Run the tests
+## Running the Application
+
+TODO: Document configuration
+(TODO first: add configuration)
+
+```bash
+gleam run
 ```
