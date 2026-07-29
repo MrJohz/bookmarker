@@ -1,3 +1,4 @@
+import exception
 import gleam/result
 import sqlight.{type Connection, type Error}
 
@@ -39,4 +40,37 @@ pub fn with_connection(path: String, f: fn(Connection) -> a) -> a {
   let value = f(conn)
   let assert Ok(Nil) = sqlight.close(conn)
   value
+}
+
+/// Run `f`'s statements as one unit: commit if it returns `Ok`, roll back
+/// every write it made if it returns `Error` or crashes.
+///
+/// `IMMEDIATE` takes the write lock up front. A plain `BEGIN` is deferred, so a
+/// transaction that reads before it writes has to upgrade its lock partway
+/// through — and SQLite cannot make that wait, so it returns `SQLITE_BUSY`
+/// immediately rather than honouring `busy_timeout`. Every transaction here
+/// writes, so there is nothing to gain by deferring.
+///
+/// SQLite has no nested transactions, so `f` must not call this again — the
+/// inner `BEGIN` fails. Reach for `SAVEPOINT` if that ever needs to work.
+pub fn transaction(
+  conn: Connection,
+  f: fn() -> Result(a, Error),
+) -> Result(a, Error) {
+  use _ <- result.try(sqlight.exec("BEGIN IMMEDIATE;", on: conn))
+
+  // A crash in `f` — a failed `let assert`, say — would otherwise leave the
+  // transaction open, taking every later write on this connection with it.
+  use <- exception.on_crash(fn() { sqlight.exec("ROLLBACK;", on: conn) })
+
+  case f() {
+    Ok(value) -> {
+      use _ <- result.map(sqlight.exec("COMMIT;", on: conn))
+      value
+    }
+    Error(e) -> {
+      let _ = sqlight.exec("ROLLBACK;", on: conn)
+      Error(e)
+    }
+  }
 }

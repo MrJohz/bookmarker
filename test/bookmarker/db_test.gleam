@@ -1,5 +1,7 @@
 import bookmarker/db
+import exception
 import gleam/dynamic/decode
+import gleam/int
 import gleam/list
 import gleam/string
 import gleeunit/should
@@ -60,6 +62,100 @@ pub fn foreign_keys_are_enforced_test() {
     sqlight.exec(insert, on: conn)
 
   code |> should.equal(sqlight.ConstraintForeignkey)
+}
+
+/// A connection with one throwaway table, so the transaction tests can write
+/// something observable without depending on the application schema.
+fn with_scratch_table(f: fn(sqlight.Connection) -> a) -> a {
+  use conn <- db.with_connection(":memory:")
+  let assert Ok(Nil) =
+    sqlight.exec("CREATE TABLE t (n INTEGER NOT NULL) strict;", on: conn)
+  f(conn)
+}
+
+fn insert(conn: sqlight.Connection, n: Int) -> Nil {
+  let assert Ok(Nil) =
+    sqlight.exec(
+      "INSERT INTO t (n) VALUES (" <> int.to_string(n) <> ");",
+      on: conn,
+    )
+  Nil
+}
+
+fn stored(conn: sqlight.Connection) -> List(Int) {
+  let assert Ok(values) =
+    sqlight.query(
+      "SELECT n FROM t ORDER BY n;",
+      on: conn,
+      with: [],
+      expecting: {
+        use n <- decode.field(0, decode.int)
+        decode.success(n)
+      },
+    )
+
+  values
+}
+
+pub fn transaction_commits_when_the_body_succeeds_test() {
+  use conn <- with_scratch_table()
+
+  let result =
+    db.transaction(conn, fn() {
+      insert(conn, 1)
+      insert(conn, 2)
+      Ok("committed")
+    })
+
+  result |> should.equal(Ok("committed"))
+  stored(conn) |> should.equal([1, 2])
+}
+
+pub fn transaction_rolls_back_every_write_when_the_body_errors_test() {
+  use conn <- with_scratch_table()
+
+  insert(conn, 1)
+
+  let failure = sqlight.SqlightError(sqlight.GenericError, "gave up", -1)
+  let result =
+    db.transaction(conn, fn() {
+      insert(conn, 2)
+      insert(conn, 3)
+      Error(failure)
+    })
+
+  result |> should.equal(Error(failure))
+
+  // The write from before the transaction stands; both writes inside it are
+  // gone, including the one that came before the failure.
+  stored(conn) |> should.equal([1])
+}
+
+/// A `let assert` in a transaction body is not exotic — `bookmarks` has one in
+/// the middle of `clear_bookmark`. If a crash skipped the rollback the
+/// transaction would stay open, and every later write on the connection would
+/// be swallowed by it.
+pub fn transaction_rolls_back_and_stays_usable_when_the_body_crashes_test() {
+  use conn <- with_scratch_table()
+
+  let assert Error(_) =
+    exception.rescue(fn() {
+      db.transaction(conn, fn() {
+        insert(conn, 1)
+        let assert [] = [1]
+        Ok(Nil)
+      })
+    })
+
+  stored(conn) |> should.equal([])
+
+  let assert Ok(Nil) =
+    db.transaction(conn, fn() {
+      insert(conn, 2)
+      Ok(Nil)
+    })
+
+  stored(conn) |> should.equal([2])
 }
 
 /// The name and DDL of every object in a database, as SQLite stored it.
