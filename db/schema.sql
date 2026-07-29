@@ -3,6 +3,8 @@ CREATE TABLE bookmarks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     url TEXT NOT NULL,
     title TEXT,
+    content TEXT,
+    canonical_url TEXT,
     created_at INTEGER NOT NULL
   ) strict;
 CREATE TABLE archives (

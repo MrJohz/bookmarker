@@ -46,6 +46,8 @@ pub type Bookmark {
   Bookmark(
     id: BookmarkId,
     url: String,
+    canonical_url: Option(String),
+    content: Option(String),
     title: Option(String),
     tags: List(String),
     archives: List(Archive),
@@ -62,6 +64,8 @@ pub fn list_bookmarks(bc: BookmarkConn) -> Result(List(Bookmark), Error) {
       s.col("bookmarks.url"),
       s.col("bookmarks.title"),
       s.col("bookmarks.created_at"),
+      s.col("bookmarks.canonical_url"),
+      s.col("bookmarks.content"),
     ])
     |> s.to_query
     |> sqlite_dialect.read_query_to_prepared_statement
@@ -73,17 +77,28 @@ pub fn list_bookmarks(bc: BookmarkConn) -> Result(List(Bookmark), Error) {
       use url <- decode.field(1, decode.string)
       use title <- decode.field(2, decode.string |> decode.optional)
       use created_at <- decode.field(3, utils.timestamp_decoder())
+      use canonical_url <- decode.field(4, decode.string |> decode.optional)
+      use content <- decode.field(5, decode.string |> decode.optional)
 
-      decode.success(#(id, url, title, created_at))
+      decode.success(#(id, url, title, created_at, canonical_url, content))
     }),
   )
 
   entries
   |> list.try_map(fn(tup) {
-    let #(id, url, title, created_at) = tup
+    let #(id, url, title, created_at, canonical_url, content) = tup
     use tags <- result.try(list_tags(bc, id))
     use archives <- result.try(list_archives(bc, id))
-    Ok(Bookmark(id:, url:, title:, tags:, archives:, created_at:))
+    Ok(Bookmark(
+      id:,
+      url:,
+      title:,
+      tags:,
+      archives:,
+      created_at:,
+      canonical_url:,
+      content:,
+    ))
   })
 }
 
@@ -114,6 +129,8 @@ pub fn add_bookmark(bc: BookmarkConn, url: String) -> Result(Bookmark, Error) {
           id:,
           url:,
           created_at:,
+          canonical_url: option.None,
+          content: option.None,
           title: option.None,
           tags: [],
           archives: [],
@@ -208,13 +225,6 @@ pub fn add_archive(
   Ok(Bookmark(..bm, archives:))
 }
 
-/// Set (or, with `None`, clear) the title of `bm`.
-///
-/// Titles are filled in later by the scraper, so this always overwrites — a
-/// re-scrape refreshes a stale title, and `None` lets a caller drop one that
-/// turned out to be wrong. We rebuild from the `RETURNING` value rather than
-/// from the argument so the record we hand back is what the database actually
-/// stores.
 pub fn set_title(
   bc: BookmarkConn,
   bm: Bookmark,
@@ -249,6 +259,78 @@ pub fn set_title(
   let assert [title] = entries
 
   Ok(Bookmark(..bm, title:))
+}
+
+pub fn set_content(
+  bc: BookmarkConn,
+  bm: Bookmark,
+  content: Option(String),
+) -> Result(Bookmark, Error) {
+  let BookmarkId(id) = bm.id
+
+  let prepared =
+    u.new()
+    |> u.table("bookmarks")
+    |> u.sets([
+      case content {
+        option.Some(content) -> u.set_string("content", content)
+        option.None -> u.set_null("content")
+      },
+    ])
+    |> u.where(w.col("bookmarks.id") |> w.eq(w.int(id)))
+    |> u.returning(["content"])
+    |> u.to_query
+    |> sqlite_dialect.write_query_to_prepared_statement
+
+  let sql = cake.get_sql(prepared)
+  let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
+
+  use entries <- result.try(
+    sqlight.query(sql, on: bc.db, with:, expecting: {
+      use content <- decode.field(0, decode.string |> decode.optional)
+      decode.success(content)
+    }),
+  )
+
+  let assert [content] = entries
+
+  Ok(Bookmark(..bm, content:))
+}
+
+pub fn set_canonical_url(
+  bc: BookmarkConn,
+  bm: Bookmark,
+  canonical_url: Option(String),
+) -> Result(Bookmark, Error) {
+  let BookmarkId(id) = bm.id
+
+  let prepared =
+    u.new()
+    |> u.table("bookmarks")
+    |> u.sets([
+      case canonical_url {
+        option.Some(url) -> u.set_string("canonical_url", url)
+        option.None -> u.set_null("canonical_url")
+      },
+    ])
+    |> u.where(w.col("bookmarks.id") |> w.eq(w.int(id)))
+    |> u.returning(["canonical_url"])
+    |> u.to_query
+    |> sqlite_dialect.write_query_to_prepared_statement
+
+  let sql = cake.get_sql(prepared)
+  let with = cake.get_params(prepared) |> list.map(utils.param_to_value)
+
+  use entries <- result.try(
+    sqlight.query(sql, on: bc.db, with:, expecting: {
+      use canonical_url <- decode.field(0, decode.string |> decode.optional)
+      decode.success(canonical_url)
+    }),
+  )
+
+  let assert [canonical_url] = entries
+
+  Ok(Bookmark(..bm, canonical_url:))
 }
 
 fn list_archives(

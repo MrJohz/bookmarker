@@ -44,6 +44,8 @@ pub fn list_bookmarks_with_unarchived_entry_test() {
       id: _,
       created_at:,
       url:,
+      canonical_url: None,
+      content: None,
       title: None,
       tags: [],
       archives: [],
@@ -66,6 +68,8 @@ pub fn create_bookmark_returns_bookmark_test() {
     id: _,
     created_at:,
     url:,
+    canonical_url: None,
+    content: None,
     title: None,
     tags: [],
     archives: [],
@@ -338,4 +342,123 @@ pub fn set_title_to_none_clears_the_title_test() {
 
   let assert Ok([bookmarks.Bookmark(title:, ..)]) = bookmarks.list_bookmarks(bc)
   title |> should.equal(None)
+}
+
+pub fn set_content_updates_bookmark_test() {
+  use bc, _ <- with_test_conn()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(bookmark) =
+    bookmarks.set_content(bc, bookmark, Some("Page body"))
+
+  bookmark.content |> should.equal(Some("Page body"))
+}
+
+pub fn set_content_is_read_out_by_list_bookmarks_test() {
+  use bc, _ <- with_test_conn()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+  let assert Ok(_) = bookmarks.set_content(bc, bookmark, Some("Page body"))
+
+  let assert Ok([bookmarks.Bookmark(content:, ..)]) =
+    bookmarks.list_bookmarks(bc)
+
+  content |> should.equal(Some("Page body"))
+}
+
+pub fn set_content_overwrites_existing_content_test() {
+  use bc, _ <- with_test_conn()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(bookmark) = bookmarks.set_content(bc, bookmark, Some("First"))
+  let assert Ok(bookmark) = bookmarks.set_content(bc, bookmark, Some("Second"))
+
+  bookmark.content |> should.equal(Some("Second"))
+}
+
+pub fn set_content_to_none_clears_the_content_test() {
+  use bc, _ <- with_test_conn()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(bookmark) =
+    bookmarks.set_content(bc, bookmark, Some("Page body"))
+  let assert Ok(bookmark) = bookmarks.set_content(bc, bookmark, None)
+
+  bookmark.content |> should.equal(None)
+
+  let assert Ok([bookmarks.Bookmark(content:, ..)]) =
+    bookmarks.list_bookmarks(bc)
+  content |> should.equal(None)
+}
+
+pub fn set_canonical_url_updates_bookmark_test() {
+  use bc, _ <- with_test_conn()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(bookmark) =
+    bookmarks.set_canonical_url(bc, bookmark, Some("http://example.com/page"))
+
+  bookmark.canonical_url |> should.equal(Some("http://example.com/page"))
+}
+
+pub fn set_canonical_url_is_read_out_by_list_bookmarks_test() {
+  use bc, _ <- with_test_conn()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+  let assert Ok(_) =
+    bookmarks.set_canonical_url(bc, bookmark, Some("http://example.com/page"))
+
+  let assert Ok([bookmarks.Bookmark(canonical_url:, ..)]) =
+    bookmarks.list_bookmarks(bc)
+
+  canonical_url |> should.equal(Some("http://example.com/page"))
+}
+
+pub fn set_canonical_url_overwrites_an_existing_canonical_url_test() {
+  use bc, _ <- with_test_conn()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(bookmark) =
+    bookmarks.set_canonical_url(bc, bookmark, Some("http://example.com/first"))
+  let assert Ok(bookmark) =
+    bookmarks.set_canonical_url(bc, bookmark, Some("http://example.com/second"))
+
+  bookmark.canonical_url |> should.equal(Some("http://example.com/second"))
+}
+
+pub fn set_canonical_url_to_none_clears_the_canonical_url_test() {
+  use bc, _ <- with_test_conn()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(bookmark) =
+    bookmarks.set_canonical_url(bc, bookmark, Some("http://example.com/page"))
+  let assert Ok(bookmark) = bookmarks.set_canonical_url(bc, bookmark, None)
+
+  bookmark.canonical_url |> should.equal(None)
+
+  let assert Ok([bookmarks.Bookmark(canonical_url:, ..)]) =
+    bookmarks.list_bookmarks(bc)
+  canonical_url |> should.equal(None)
+}
+
+/// The canonical URL is advisory only (ADR-0002) — recording one must never
+/// rewrite the URL the bookmark was saved with.
+pub fn set_canonical_url_leaves_the_url_untouched_test() {
+  use bc, _ <- with_test_conn()
+
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+
+  let assert Ok(bookmark) =
+    bookmarks.set_canonical_url(bc, bookmark, Some("http://example.com/page"))
+
+  bookmark.url |> should.equal("http://example.com")
+
+  let assert Ok([bookmarks.Bookmark(url:, ..)]) = bookmarks.list_bookmarks(bc)
+  url |> should.equal("http://example.com")
 }
