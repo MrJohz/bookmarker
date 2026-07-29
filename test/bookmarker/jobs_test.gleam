@@ -220,3 +220,20 @@ pub fn completed_at_is_stable_across_reads_test() {
   job1_completed_at |> should.equal(job2_completed_at)
   job1 |> should.equal(job2)
 }
+
+pub fn completed_at_is_stable_across_reads_test_on_error_test() {
+  use jc, bc, Deps(clock:, ..) <- with_test_conn()
+
+  mock_clock.set(clock, ts("2026-01-05T00:06:00.123456789Z"))
+  let assert Ok(bookmark) = bookmarks.add_bookmark(bc, "http://example.com")
+  let assert Ok(job) = jobs.schedule_job(jc, bookmark)
+  let assert Ok(option.Some(_)) = jobs.start_job(jc, job)
+
+  let assert Ok(option.Some(job1)) = jobs.fail_job(jc, job, "err")
+  let assert jobs.Errored(completed_at: job1_completed_at, ..) = job1.status
+  let assert Ok([job2]) = jobs.list_for_bookmark(jc, bookmark)
+  let assert jobs.Errored(completed_at: job2_completed_at, ..) = job2.status
+
+  job1_completed_at |> should.equal(job2_completed_at)
+  job1 |> should.equal(job2)
+}

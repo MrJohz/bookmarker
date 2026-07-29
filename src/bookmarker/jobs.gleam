@@ -119,7 +119,7 @@ pub fn list_for_bookmark(
           status: Completed(started_at:, completed_at:, detail:),
         )
         |> decode.success
-      "failed", Some(started_at), Some(completed_at), Some(error) ->
+      "errored", Some(started_at), Some(completed_at), Some(error) ->
         Job(
           JobId(id),
           bookmark:,
