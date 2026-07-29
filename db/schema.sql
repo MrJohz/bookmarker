@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS "schema_migrations" (version varchar(128) primary key);
+CREATE TABLE "schema_migrations" (version varchar(128) primary key);
 CREATE TABLE bookmarks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     url TEXT NOT NULL,
@@ -25,12 +25,12 @@ CREATE TABLE jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bookmark_id INTEGER NOT NULL,
     status TEXT NOT NULL CHECK (
-      status IN ('pending', 'running', 'completed', 'errored')
+      status IN ('pending', 'running', 'completed', 'failed')
     ),
     created_at INTEGER NOT NULL,
     started_at INTEGER,
     completed_at INTEGER,
-    detail TEXT,
+    error TEXT,
     FOREIGN KEY (bookmark_id) REFERENCES bookmarks (id),
     CHECK (
       (
@@ -48,10 +48,10 @@ CREATE TABLE jobs (
         AND completed_at IS NOT NULL
       )
       OR (
-        status = 'errored'
+        status = 'failed'
         AND STARTED_AT IS NOT NULL
         AND completed_at IS NOT NULL
-        AND detail IS NOT NULL
+        AND error IS NOT NULL
       )
     )
   ) strict;

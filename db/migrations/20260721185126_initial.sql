@@ -32,12 +32,12 @@ CREATE TABLE
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bookmark_id INTEGER NOT NULL,
     status TEXT NOT NULL CHECK (
-      status IN ('pending', 'running', 'completed', 'errored')
+      status IN ('pending', 'running', 'completed', 'failed')
     ),
     created_at INTEGER NOT NULL,
     started_at INTEGER,
     completed_at INTEGER,
-    detail TEXT,
+    error TEXT,
     FOREIGN KEY (bookmark_id) REFERENCES bookmarks (id),
     CHECK (
       (
@@ -55,10 +55,10 @@ CREATE TABLE
         AND completed_at IS NOT NULL
       )
       OR (
-        status = 'errored'
+        status = 'failed'
         AND STARTED_AT IS NOT NULL
         AND completed_at IS NOT NULL
-        AND detail IS NOT NULL
+        AND error IS NOT NULL
       )
     )
   ) strict;

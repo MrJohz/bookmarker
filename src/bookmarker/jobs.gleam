@@ -36,13 +36,9 @@ pub type Job {
 
 pub type JobStatus {
   Pending
-  Started(started_at: Timestamp)
-  Completed(
-    started_at: Timestamp,
-    completed_at: Timestamp,
-    detail: Option(String),
-  )
-  Errored(started_at: Timestamp, completed_at: Timestamp, error: String)
+  Running(started_at: Timestamp)
+  Completed(started_at: Timestamp, completed_at: Timestamp)
+  Failed(started_at: Timestamp, completed_at: Timestamp, error: String)
 }
 
 pub fn list_pending(jc: JobsConn) -> Result(List(Job), Error) {
@@ -78,7 +74,7 @@ pub fn list_for_bookmark(
       s.col("jobs.created_at"),
       s.col("jobs.started_at"),
       s.col("jobs.completed_at"),
-      s.col("jobs.detail"),
+      s.col("jobs.error"),
     ])
     |> s.where(
       w.col("jobs.bookmark_id") |> w.eq(w.int(bookmarks.id_to_int(bm.id))),
@@ -102,29 +98,29 @@ pub fn list_for_bookmark(
       5,
       utils.timestamp_decoder() |> decode.optional,
     )
-    use detail <- decode.field(6, decode.string |> decode.optional)
+    use error <- decode.field(6, decode.string |> decode.optional)
 
-    case status, started_at, completed_at, detail {
+    case status, started_at, completed_at, error {
       "pending", _, _, _ ->
         Job(JobId(id), bookmark:, created_at:, status: Pending)
         |> decode.success
       "running", Some(started_at), _, _ ->
-        Job(JobId(id), bookmark:, created_at:, status: Started(started_at:))
+        Job(JobId(id), bookmark:, created_at:, status: Running(started_at:))
         |> decode.success
-      "completed", Some(started_at), Some(completed_at), detail ->
+      "completed", Some(started_at), Some(completed_at), _ ->
         Job(
           JobId(id),
           bookmark:,
           created_at:,
-          status: Completed(started_at:, completed_at:, detail:),
+          status: Completed(started_at:, completed_at:),
         )
         |> decode.success
-      "errored", Some(started_at), Some(completed_at), Some(error) ->
+      "failed", Some(started_at), Some(completed_at), Some(error) ->
         Job(
           JobId(id),
           bookmark:,
           created_at:,
-          status: Errored(started_at:, completed_at:, error:),
+          status: Failed(started_at:, completed_at:, error:),
         )
         |> decode.success
       _, _, _, _ ->
@@ -226,15 +222,11 @@ pub fn start_job(jc: JobsConn, job: Job) -> Result(Option(Job), Error) {
   case entries {
     [] -> Ok(option.None)
     [started_at, ..] ->
-      Ok(option.Some(Job(..job, status: Started(started_at:))))
+      Ok(option.Some(Job(..job, status: Running(started_at:))))
   }
 }
 
-pub fn complete_job(
-  jc: JobsConn,
-  job: Job,
-  detail: Option(String),
-) -> Result(Option(Job), Error) {
+pub fn complete_job(jc: JobsConn, job: Job) -> Result(Option(Job), Error) {
   // Move the job to `completed`, but only if it's currently `running` — the
   // status guard keeps this atomic against a competing worker, just like
   // `start_job`. Unlike `start_job` we don't own `started_at`, so we read it
@@ -249,10 +241,6 @@ pub fn complete_job(
     |> u.sets([
       u.set_string("status", "completed"),
       u.set_int("completed_at", completed_at |> utils.timestamp_to_millis),
-      case detail {
-        option.Some(detail) -> u.set_string("detail", detail)
-        option.None -> u.set_null("detail")
-      },
     ])
     |> u.where(
       w.and([
@@ -278,9 +266,7 @@ pub fn complete_job(
   case entries {
     [] -> Ok(option.None)
     [#(started_at, completed_at), ..] ->
-      Ok(option.Some(
-        Job(..job, status: Completed(started_at:, completed_at:, detail:)),
-      ))
+      Ok(option.Some(Job(..job, status: Completed(started_at:, completed_at:))))
   }
 }
 
@@ -296,9 +282,9 @@ pub fn fail_job(
     u.new()
     |> u.table("jobs")
     |> u.sets([
-      u.set_string("status", "errored"),
+      u.set_string("status", "failed"),
       u.set_int("completed_at", completed_at |> utils.timestamp_to_millis),
-      u.set_string("detail", error),
+      u.set_string("error", error),
     ])
     |> u.where(
       w.and([
@@ -325,7 +311,7 @@ pub fn fail_job(
     [] -> Ok(option.None)
     [#(started_at, completed_at), ..] ->
       Ok(option.Some(
-        Job(..job, status: Errored(started_at:, completed_at:, error:)),
+        Job(..job, status: Failed(started_at:, completed_at:, error:)),
       ))
   }
 }

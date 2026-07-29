@@ -71,7 +71,7 @@ pub fn start_job_marks_running_test() {
   started.id |> should.equal(job.id)
   started.bookmark |> should.equal(bookmark.id)
   started.created_at |> should.equal(job.created_at)
-  started.status |> should.equal(jobs.Started(started_at:))
+  started.status |> should.equal(jobs.Running(started_at:))
 
   // Started jobs are no longer pending.
   jobs.list_pending(jc) |> should.equal(Ok([]))
@@ -101,19 +101,14 @@ pub fn complete_job_marks_completed_test() {
 
   let completed_at = ts("2026-01-05T00:07:00Z")
   mock_clock.set(clock, completed_at)
-  let assert Ok(option.Some(completed)) =
-    jobs.complete_job(jc, started, option.Some("all good"))
+  let assert Ok(option.Some(completed)) = jobs.complete_job(jc, started)
 
   completed.id |> should.equal(job.id)
   completed.bookmark |> should.equal(bookmark.id)
   completed.created_at |> should.equal(job.created_at)
   // `started_at` is read back from the row, not carried from the in-memory job.
   completed.status
-  |> should.equal(jobs.Completed(
-    started_at:,
-    completed_at:,
-    detail: option.Some("all good"),
-  ))
+  |> should.equal(jobs.Completed(started_at:, completed_at:))
 }
 
 pub fn complete_job_returns_none_when_not_running_test() {
@@ -123,10 +118,10 @@ pub fn complete_job_returns_none_when_not_running_test() {
   let assert Ok(job) = jobs.schedule_job(jc, bookmark)
 
   // A pending job that was never started can't be completed.
-  jobs.complete_job(jc, job, option.None) |> should.equal(Ok(option.None))
+  jobs.complete_job(jc, job) |> should.equal(Ok(option.None))
 }
 
-pub fn fail_job_marks_errored_test() {
+pub fn fail_job_marks_failed_test() {
   use jc, bc, Deps(clock:, ..) <- with_test_conn()
 
   mock_clock.set(clock, ts("2026-01-05T00:05:10Z"))
@@ -143,7 +138,7 @@ pub fn fail_job_marks_errored_test() {
 
   failed.id |> should.equal(job.id)
   failed.status
-  |> should.equal(jobs.Errored(started_at:, completed_at:, error: "boom"))
+  |> should.equal(jobs.Failed(started_at:, completed_at:, error: "boom"))
 }
 
 pub fn fail_job_returns_none_when_not_running_test() {
@@ -154,7 +149,7 @@ pub fn fail_job_returns_none_when_not_running_test() {
 
   // Completing wins; a subsequent fail finds no running row and returns None.
   let assert Ok(option.Some(started)) = jobs.start_job(jc, job)
-  let assert Ok(option.Some(_)) = jobs.complete_job(jc, started, option.None)
+  let assert Ok(option.Some(_)) = jobs.complete_job(jc, started)
   jobs.fail_job(jc, started, "boom") |> should.equal(Ok(option.None))
 }
 
@@ -196,9 +191,9 @@ pub fn started_at_is_stable_across_reads_test() {
   let assert Ok(job) = jobs.schedule_job(jc, bookmark)
 
   let assert Ok(option.Some(job1)) = jobs.start_job(jc, job)
-  let assert jobs.Started(started_at: job1_started_at) = job1.status
+  let assert jobs.Running(started_at: job1_started_at) = job1.status
   let assert Ok([job2]) = jobs.list_for_bookmark(jc, bookmark)
-  let assert jobs.Started(started_at: job2_started_at) = job2.status
+  let assert jobs.Running(started_at: job2_started_at) = job2.status
 
   job1_started_at |> should.equal(job2_started_at)
   job1 |> should.equal(job2)
@@ -212,7 +207,7 @@ pub fn completed_at_is_stable_across_reads_test() {
   let assert Ok(job) = jobs.schedule_job(jc, bookmark)
   let assert Ok(option.Some(_)) = jobs.start_job(jc, job)
 
-  let assert Ok(option.Some(job1)) = jobs.complete_job(jc, job, option.None)
+  let assert Ok(option.Some(job1)) = jobs.complete_job(jc, job)
   let assert jobs.Completed(completed_at: job1_completed_at, ..) = job1.status
   let assert Ok([job2]) = jobs.list_for_bookmark(jc, bookmark)
   let assert jobs.Completed(completed_at: job2_completed_at, ..) = job2.status
@@ -230,9 +225,9 @@ pub fn completed_at_is_stable_across_reads_test_on_error_test() {
   let assert Ok(option.Some(_)) = jobs.start_job(jc, job)
 
   let assert Ok(option.Some(job1)) = jobs.fail_job(jc, job, "err")
-  let assert jobs.Errored(completed_at: job1_completed_at, ..) = job1.status
+  let assert jobs.Failed(completed_at: job1_completed_at, ..) = job1.status
   let assert Ok([job2]) = jobs.list_for_bookmark(jc, bookmark)
-  let assert jobs.Errored(completed_at: job2_completed_at, ..) = job2.status
+  let assert jobs.Failed(completed_at: job2_completed_at, ..) = job2.status
 
   job1_completed_at |> should.equal(job2_completed_at)
   job1 |> should.equal(job2)
